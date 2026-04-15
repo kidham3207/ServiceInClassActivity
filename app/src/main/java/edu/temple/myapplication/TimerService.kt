@@ -1,6 +1,7 @@
 package edu.temple.myapplication
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Handler
@@ -56,6 +57,11 @@ class TimerService : Service() {
         // Pause a running timer
         fun pause() {
             this@TimerService.pause()
+        }
+
+        fun getSavedTime(): Int {
+            return this@TimerService.getSharedPreferences("timer_prefs", Context.MODE_PRIVATE)
+                .getInt("saved_time", 0)
         }
 
     }
