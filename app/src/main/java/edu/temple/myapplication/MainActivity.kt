@@ -15,36 +15,33 @@ import android.widget.TextView
 
 class MainActivity : AppCompatActivity() {
 
-    lateinit var textView: TextView
+    private lateinit var textView: TextView
 
-    var timerBinder: TimerService.TimerBinder? = null
-    var isConnected = false
+    private val defaultValue = 20
+    private var timerBinder: TimerService.TimerBinder? = null
+    private var isBound = false
 
-    val timeHandler = Handler(Looper.getMainLooper()){
-        textView.text = it.what.toString()
+    private val handler = Handler(Looper.getMainLooper()) { msg ->
+        textView.text = msg.what.toString()
         true
     }
 
-    val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            timerBinder = service as TimerService.TimerBinder
-            timerBinder!!.setHandler(timeHandler)
-            isConnected = true
+    private val conn = object : ServiceConnection {
+        override fun onServiceConnected(p0: ComponentName?, p1: IBinder?) {
+            timerBinder = p1 as TimerService.TimerBinder  // assign to timerBinder, not timerService
+            timerBinder?.setHandler(handler)
+            isBound = true
 
+            // Show saved time in UI immediately on connect
             val saved = timerBinder?.getSavedTime() ?: 0
-            if (saved > 0) textView.text = "$saved"
+            textView.text = if (saved > 0) saved.toString() else defaultValue.toString()
         }
-
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            isConnected = false
+            timerBinder = null
+            isBound = false
         }
     }
-
-
-
-
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,50 +49,29 @@ class MainActivity : AppCompatActivity() {
 
         textView = findViewById(R.id.textView)
 
-
-        bindService(
-            Intent(this, TimerService::class.java),
-            serviceConnection,
-            BIND_AUTO_CREATE
-        )
-
         findViewById<Button>(R.id.startButton).setOnClickListener {
-            if (isConnected) {
-                val savedTime = timerBinder?.getSavedTime() ?: 0
-                val startValue = if (savedTime > 0) savedTime else 100
+            if (isBound) {
+                val saved = timerBinder?.getSavedTime() ?: 0
+                val startValue = if (saved > 0) saved else defaultValue
                 timerBinder?.start(startValue)
             }
         }
 
-
         findViewById<Button>(R.id.stopButton).setOnClickListener {
-            if(isConnected) timerBinder?.pause()
+            if (isBound) timerBinder?.pause()  // Service is responsible for persisting on pause
         }
     }
 
-    override fun onDestroy() {
-        unbindService(serviceConnection)
-        super.onDestroy()
+    override fun onStart() {
+        super.onStart()
+        bindService(Intent(this, TimerService::class.java), conn, BIND_AUTO_CREATE)
     }
 
-
-//    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
-//        menuInflater.inflate(R.menu.main, menu)
-//        return super.onCreateOptionsMenu(menu)
-//    }
-//
-//    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-//        when(item.itemId){
-//            R.id.action_start -> {
-//                timerBinder?.start(100)
-//            }
-//            R.id.action_stop ->{
-//                timerBinder?.pause()
-//            }
-//            else -> return false
-//        }
-//        return true
-//    }
-
-
+    override fun onStop() {
+        super.onStop()
+        if (isBound) {
+            unbindService(conn)
+            isBound = false
+        }
+    }
 }

@@ -12,119 +12,107 @@ import android.util.Log
 class TimerService : Service() {
 
     private var isRunning = false
-
-    private var timerHandler : Handler? = null
-
+    private var timerHandler: Handler? = null
+    private var paused = false
+    private var currentValue = 0
     lateinit var t: TimerThread
 
-    private var paused = false
+    private val prefs by lazy {
+        getSharedPreferences("timer_prefs", Context.MODE_PRIVATE)
+    }
 
     inner class TimerBinder : Binder() {
 
-        // Check if Timer is already running
         val isRunning: Boolean
             get() = this@TimerService.isRunning
 
-        // Check if Timer is paused
         val paused: Boolean
             get() = this@TimerService.paused
 
-        // Start a new timer
-        fun start(startValue: Int){
+        fun start(startValue: Int) {
+            if (isRunning && !paused) return  // already running, do nothing
 
-            if (!paused) {
-                if (!isRunning) {
-                    if (::t.isInitialized) t.interrupt()
-                    this@TimerService.start(startValue)
-                }
+            if (paused) {
+                // Resume from where we left off
+                this@TimerService.paused = false
+                this@TimerService.isRunning = true
+                synchronized(t) { t.notify() }
             } else {
-                pause()
+                // Fresh start — clear any saved value
+                clearSavedTime()
+                if (::t.isInitialized) t.interrupt()
+                this@TimerService.start(startValue)
             }
         }
 
-        // Receive updates from Service
         fun setHandler(handler: Handler) {
             timerHandler = handler
         }
 
-        // Stop a currently running timer
-        fun stop() {
-            if (::t.isInitialized || isRunning) {
-                t.interrupt()
-            }
-        }
-
-        // Pause a running timer
         fun pause() {
             this@TimerService.pause()
         }
 
         fun getSavedTime(): Int {
-            return this@TimerService.getSharedPreferences("timer_prefs", Context.MODE_PRIVATE)
-                .getInt("saved_time", 0)
+            return prefs.getInt("saved_time", 0)
         }
-
     }
 
-    override fun onCreate() {
-        super.onCreate()
-
-        Log.d("TimerService status", "Created")
-    }
-
-    override fun onBind(intent: Intent): IBinder {
-        return TimerBinder()
-    }
+    override fun onBind(intent: Intent): IBinder = TimerBinder()
 
     fun start(startValue: Int) {
         t = TimerThread(startValue)
         t.start()
     }
 
-    fun pause () {
-        if (::t.isInitialized) {
-            paused = !paused
-            isRunning = !paused
+    fun pause() {
+        if (::t.isInitialized && isRunning) {
+            paused = true
+            isRunning = false
+            // Save the current value when paused
+            prefs.edit().putInt("saved_time", currentValue).apply()
         }
     }
 
-    inner class TimerThread(private val startValue: Int) : Thread() {
+    fun clearSavedTime() {
+        prefs.edit().remove("saved_time").apply()
+    }
 
+    inner class TimerThread(private val startValue: Int) : Thread() {
         override fun run() {
             isRunning = true
             try {
-                for (i in startValue downTo 1)  {
-                    Log.d("Countdown", i.toString())
-
+                for (i in startValue downTo 1) {
+                    currentValue = i
                     timerHandler?.sendEmptyMessage(i)
 
-                    while (paused);
-                    sleep(1000)
+                    // Block cleanly while paused
+                    synchronized(this) {
+                        while (paused) wait()
+                    }
 
+                    sleep(1000)
                 }
+                // Countdown completed naturally — clear saved state
                 isRunning = false
+                clearSavedTime()
             } catch (e: InterruptedException) {
-                Log.d("Timer interrupted", e.toString())
                 isRunning = false
                 paused = false
             }
         }
-
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        if (::t.isInitialized) {
+        // If not paused, interrupt the thread — no save occurs (requirement 3)
+        if (::t.isInitialized && isRunning && !paused) {
             t.interrupt()
         }
-
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-
         Log.d("TimerService status", "Destroyed")
     }
-
-
 }
