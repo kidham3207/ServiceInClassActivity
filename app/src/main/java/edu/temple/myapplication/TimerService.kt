@@ -8,13 +8,12 @@ import android.os.Handler
 import android.os.IBinder
 import android.util.Log
 
-@Suppress("ControlFlowWithEmptyBody")
 class TimerService : Service() {
 
     private var isRunning = false
-    private var timerHandler: Handler? = null
     private var paused = false
     private var currentValue = 0
+    private var timerHandler: Handler? = null
     lateinit var t: TimerThread
 
     private val prefs by lazy {
@@ -30,15 +29,11 @@ class TimerService : Service() {
             get() = this@TimerService.paused
 
         fun start(startValue: Int) {
-            if (isRunning && !paused) return  // already running, do nothing
+            if (this@TimerService.isRunning && !this@TimerService.paused) return
 
-            if (paused) {
-                // Resume from where we left off
-                this@TimerService.paused = false
-                this@TimerService.isRunning = true
-                synchronized(t) { t.notify() }
+            if (this@TimerService.paused) {
+                this@TimerService.resume()
             } else {
-                // Fresh start — clear any saved value
                 clearSavedTime()
                 if (::t.isInitialized) t.interrupt()
                 this@TimerService.start(startValue)
@@ -58,6 +53,11 @@ class TimerService : Service() {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        Log.d("TimerService status", "Created")
+    }
+
     override fun onBind(intent: Intent): IBinder = TimerBinder()
 
     fun start(startValue: Int) {
@@ -65,11 +65,20 @@ class TimerService : Service() {
         t.start()
     }
 
+    fun resume() {
+        this@TimerService.paused = false
+        this@TimerService.isRunning = true
+        if (::t.isInitialized) {
+            synchronized(t) {
+                (t as java.lang.Object).notify()
+            }
+        }
+    }
+
     fun pause() {
         if (::t.isInitialized && isRunning) {
             paused = true
             isRunning = false
-            // Save the current value when paused
             prefs.edit().putInt("saved_time", currentValue).apply()
         }
     }
@@ -86,25 +95,25 @@ class TimerService : Service() {
                     currentValue = i
                     timerHandler?.sendEmptyMessage(i)
 
-                    // Block cleanly while paused
                     synchronized(this) {
-                        while (paused) wait()
+                        while (this@TimerService.paused) {
+                            (this as java.lang.Object).wait()
+                        }
                     }
 
                     sleep(1000)
                 }
-                // Countdown completed naturally — clear saved state
                 isRunning = false
                 clearSavedTime()
             } catch (e: InterruptedException) {
                 isRunning = false
                 paused = false
+                Log.d("TimerService", "Thread interrupted: $e")
             }
         }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        // If not paused, interrupt the thread — no save occurs (requirement 3)
         if (::t.isInitialized && isRunning && !paused) {
             t.interrupt()
         }
